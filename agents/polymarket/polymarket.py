@@ -1,11 +1,15 @@
 # core polymarket api
 # https://github.com/Polymarket/py-clob-client/tree/main/examples
 
+from __future__ import annotations
+
+import json
 import os
 import pdb
 import time
 import ast
 import requests
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -214,6 +218,32 @@ class Polymarket:
             market = data[0]
             return self.map_api_to_market(market, token_id)
 
+    def get_binary_clob_token_ids_by_slug(self, slug: str) -> tuple[str, str, str]:
+        """
+        Resolve a Polymarket market slug to outcome token ids (gamma order: first, second).
+
+        Returns (yes_token_id, no_token_id, canonical_slug) using the first API match.
+        """
+        params = {"slug": slug.strip()}
+        res = httpx.get(self.gamma_markets_endpoint, params=params)
+        if res.status_code != 200:
+            raise RuntimeError(
+                f"Gamma markets API HTTP {res.status_code} for slug={slug!r}"
+            )
+        data = res.json()
+        if not data:
+            raise RuntimeError(f"No market found for slug={slug!r}")
+        market = data[0]
+        raw_tokens = market.get("clobTokenIds")
+        if isinstance(raw_tokens, str):
+            raw_tokens = json.loads(raw_tokens)
+        if not raw_tokens or len(raw_tokens) < 2:
+            raise RuntimeError(
+                f"Market slug={slug!r} has fewer than two clob tokens; not a binary market"
+            )
+        canonical = str(market.get("slug") or slug)
+        return str(raw_tokens[0]), str(raw_tokens[1]), canonical
+
     def map_api_to_market(self, market, token_id: str = "") -> SimpleMarket:
         market = {
             "id": int(market["id"]),
@@ -337,6 +367,82 @@ class Polymarket:
         return self.client.create_and_post_order(
             OrderArgs(price=price, size=size, side=side, token_id=token_id)
         )
+
+    def extract_order_id(self, order_response: Any) -> str:
+        if isinstance(order_response, str):
+            return order_response
+        if not isinstance(order_response, dict):
+            return ""
+
+        for key in ("orderID", "orderId", "id"):
+            if key in order_response and order_response[key]:
+                return str(order_response[key])
+
+        if "data" in order_response and isinstance(order_response["data"], dict):
+            nested = order_response["data"]
+            for key in ("orderID", "orderId", "id"):
+                if key in nested and nested[key]:
+                    return str(nested[key])
+        return ""
+
+    def _get_order_raw(self, order_id: str) -> dict:
+        candidates = ("get_order", "get_order_by_id")
+        for method_name in candidates:
+            method = getattr(self.client, method_name, None)
+            if callable(method):
+                data = method(order_id)
+                if isinstance(data, dict):
+                    return data
+                return {"raw": data}
+        raise RuntimeError("No compatible order-fetch method found on clob client.")
+
+    def cancel_order(self, order_id: str) -> Any:
+        """Cancel an open order by id (py-clob-client API may vary by version)."""
+        c = self.client
+        for call in (
+            lambda: c.cancel_orders(order_ids=[order_id]),
+            lambda: c.cancel_orders([order_id]),
+            lambda: c.cancel(order_id),
+        ):
+            try:
+                return call()
+            except Exception:
+                continue
+        raise RuntimeError(
+            "Could not cancel order — no compatible cancel method on ClobClient; "
+            "check py-clob-client version."
+        )
+
+    def get_order_filled_size(self, order_id: str) -> float:
+        order = self._get_order_raw(order_id)
+        data = order.get("data", order)
+
+        for key in ("filledSize", "filled_size", "filled", "size_matched"):
+            if key in data and data[key] is not None:
+                return float(data[key])
+
+        if "size" in data and "remainingSize" in data:
+            return float(data["size"]) - float(data["remainingSize"])
+        if "original_size" in data and "remaining_size" in data:
+            return float(data["original_size"]) - float(data["remaining_size"])
+        return 0.0
+
+    def is_market_open_by_slug(self, market_slug: str) -> bool:
+        params = {"slug": market_slug}
+        res = httpx.get(self.gamma_markets_endpoint, params=params)
+        if res.status_code != 200:
+            return False
+
+        data = res.json()
+        if not data:
+            return False
+
+        market = data[0]
+        active = bool(market.get("active", False))
+        closed = bool(market.get("closed", True))
+        archived = bool(market.get("archived", True))
+        accepting_orders = bool(market.get("acceptingOrders", True))
+        return active and not closed and not archived and accepting_orders
 
     def execute_market_order(self, market, amount) -> str:
         token_id = ast.literal_eval(market[0].dict()["metadata"]["clob_token_ids"])[1]
