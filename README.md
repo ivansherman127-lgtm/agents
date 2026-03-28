@@ -99,19 +99,7 @@ This repo is inteded for use with Python 3.9
 
 6. Load your wallet with USDC.
 
-7. Try the command line interface...
-
-   ```
-   python scripts/python/cli.py
-   ```
-
-   Or just go trade! 
-
-   ```
-   python agents/application/trade.py
-   ```
-
-8. Note: If running the command outside of docker, please set the following env var:
+7. Note: If running the command outside of docker, please set the following env var:
 
    ```
    export PYTHONPATH="."
@@ -139,28 +127,6 @@ Polymarket Agents connectors standardize data sources and order types.
 - `Polymarket.py`: defines a Polymarket class that interacts with the Polymarket API to retrieve and manage market and event data, and to execute orders on the Polymarket DEX. It includes methods for API key initialization, market and event data retrieval, and trade execution. The file also provides utility functions for building and signing orders, as well as examples for testing API interactions.
 
 - `Objects.py`: data models using Pydantic; representations for trades, markets, events, and related entities.
-
-### Scripts
-
-Files for managing your local environment, server set-up to run the application remotely, and cli for end-user commands.
-
-`cli.py` is the primary user interface for the repo. Users can run various commands to interact with the Polymarket API, retrieve relevant news articles, query local data, send data/prompts to LLMs, and execute trades in Polymarkets.
-
-Commands should follow this format:
-
-`python scripts/python/cli.py command_name [attribute value] [attribute value]`
-
-Example:
-
-`get-all-markets`
-Retrieve and display a list of markets from Polymarket, sorted by volume.
-
-   ```
-   python scripts/python/cli.py get-all-markets --limit <LIMIT> --sort-by <SORT_BY>
-   ```
-
-- limit: The number of markets to retrieve (default: 5).
-- sort_by: The sorting criterion, either volume (default) or another valid attribute.
 
 # Contributing
 

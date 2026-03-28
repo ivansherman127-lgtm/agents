@@ -32,3 +32,18 @@ data/clob_snapshots/
 data/backtest_logs/
 data/control/*
 data/local/
+
+# Private bots, strategies, scripts, and tests live in a separate private repo
+agents/application/
+scripts/python/cli.py
+scripts/python/metrics_dashboard.py
+scripts/python/record_crypto_clob_snapshots.py
+scripts/python/run_backtest_grid_once.py
+scripts/python/run_continuous_backtests.py
+scripts/python/run_parallel_snapshot_recorders.py
+tests/test_hedge_cancel_strategy.py
+tests/test_one_shot_strategy.py
+tests/test_polymarket_url.py
+tests/test_clob_price_history.py
+tests/test_clob_snapshot_backtest.py
+tests/test_gamma_series_history.py
