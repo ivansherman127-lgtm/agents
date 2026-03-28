@@ -8,6 +8,7 @@ __pycache__
 .pytest_cache
 htmlcov
 dist
+*.egg-info/
 site
 .coverage
 coverage.xml
@@ -27,8 +28,5 @@ archive.zip
 .cache
 .DS_Store
 local_db*
-data/sessions/*.jsonl
-data/clob_snapshots/
-data/backtest_logs/
-data/control/*
-data/local/
+# Entire data tree is local-only (snapshots, logs, sessions, benchmarks)
+data/

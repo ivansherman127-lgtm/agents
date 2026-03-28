@@ -1,3 +1,5 @@
+# setuptools>=82 removes pkg_resources; web3 6.x still imports it at import time
+setuptools>=65,<82
 aiohappyeyeballs==2.3.4
 aiohttp==3.10.0
 aiosignal==1.3.1
