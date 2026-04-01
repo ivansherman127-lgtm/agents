@@ -3,12 +3,15 @@
 from agents.application.clob_snapshot_backtest import (
     backtest_family_chains,
     best_bid_ask,
+    family_key_to_split_filename,
+    group_rows_by_condition,
     index_family_chains,
     index_recorded_markets,
     market_family_key,
     merged_yes_ask_series_for_chain,
     rows_for_condition,
     simulate_dual_limit_book_snapshots,
+    window_outcome_book_extremes,
 )
 
 
@@ -103,6 +106,8 @@ def test_index_and_rows_for_condition():
         "2026-01-01T00:00:00Z",
         "2026-01-01T00:00:01Z",
     ]
+    by_cid = group_rows_by_condition(rows)
+    assert by_cid["0xabc"] == ordered
 
 
 def test_market_family_key_strips_epoch_suffix():
@@ -160,7 +165,8 @@ def test_backtest_chain_resets_each_window():
         {
             "ts_utc": "2026-01-02T00:00:00Z",
             "condition_id": "cB",
-            "market_slug": "m-b",
+            # Same market_slug as cA so both windows are one recurring family (chain).
+            "market_slug": "m-a",
             "event_slug": "x-1000000002",
             "event_title": "X",
             "bucket": "15M",
@@ -171,7 +177,7 @@ def test_backtest_chain_resets_each_window():
         {
             "ts_utc": "2026-01-02T00:00:10Z",
             "condition_id": "cB",
-            "market_slug": "m-b",
+            "market_slug": "m-a",
             "event_slug": "x-1000000002",
             "event_title": "X",
             "bucket": "15M",
@@ -204,3 +210,25 @@ def test_backtest_chain_resets_each_window():
     assert one_win == 1.5
     assert agg["total_pnl_usdc"] == 3.0
     assert agg["total_deployed_usdc"] == round(2 * 0.45 * 10 * 2, 6)
+
+
+def test_family_key_to_split_filename():
+    assert family_key_to_split_filename("[15M] btc-updown-15m") == "15M_btc-updown-15m.jsonl"
+
+
+def test_window_outcome_book_extremes():
+    snaps = [
+        {
+            "yes_book": {"bids": [{"price": "0.4"}], "asks": [{"price": "0.5"}]},
+            "no_book": {"bids": [{"price": "0.45"}], "asks": [{"price": "0.55"}]},
+        },
+        {
+            "yes_book": {"bids": [{"price": "0.42"}], "asks": [{"price": "0.48"}]},
+            "no_book": {"bids": [{"price": "0.5"}], "asks": [{"price": "0.52"}]},
+        },
+    ]
+    ex = window_outcome_book_extremes(snaps)
+    assert ex["yes_low"] == 0.4
+    assert ex["yes_high"] == 0.5
+    assert ex["no_low"] == 0.45
+    assert ex["no_high"] == 0.55

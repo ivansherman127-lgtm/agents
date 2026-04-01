@@ -95,6 +95,36 @@ def load_all_snapshot_files(clob_dir: Path) -> List[Dict[str, Any]]:
     return merged
 
 
+def family_key_to_split_filename(family_key: str) -> str:
+    """
+    Stable filename for **one JSONL per market family** (used by ``split_clob_snapshots_by_family``).
+
+    Example: ``[15M] btc-updown-15m`` → ``15M_btc-updown-15m.jsonl``
+    """
+    s = (family_key or "").strip()
+    s = re.sub(r"^\[([^\]]+)\]\s*", r"\1_", s)
+    s = re.sub(r"[^a-zA-Z0-9._-]+", "_", s)
+    s = re.sub(r"_+", "_", s).strip("_")
+    if not s:
+        s = "unknown"
+    return f"{s[:200]}.jsonl"
+
+
+def list_split_family_files(split_dir: Path) -> List[Path]:
+    """Sorted ``*.jsonl`` paths under ``split_dir`` (one market family per file)."""
+    if not split_dir.is_dir():
+        return []
+    return sorted(split_dir.glob("*.jsonl"))
+
+
+def load_split_family_files(paths: List[Path]) -> List[Dict[str, Any]]:
+    """Merge rows from split-family JSONL files (same schema as monolithic CLOB snapshots)."""
+    merged: List[Dict[str, Any]] = []
+    for p in paths:
+        merged.extend(load_jsonl_snapshots(p))
+    return merged
+
+
 def index_recorded_markets(rows: List[Dict[str, Any]]) -> Dict[str, RecordedMarketInfo]:
     """Group rows by ``condition_id`` (fallback: token pair) and return summary per market."""
     groups: Dict[str, List[Dict[str, Any]]] = {}
@@ -161,6 +191,27 @@ def family_group_key(info: RecordedMarketInfo) -> str:
     return f"[{info.bucket}] {core}"
 
 
+def family_key_from_snapshot_row(row: Dict[str, Any]) -> str:
+    """
+    Same family label as ``family_group_key(RecordedMarketInfo)`` for a single JSONL / DB row.
+    Used when indexing rows without building ``RecordedMarketInfo`` first.
+    """
+    slug = (str(row.get("market_slug") or "").strip() or str(row.get("event_slug") or "").strip())
+    core = market_family_key(slug)
+    bucket = str(row.get("bucket") or "")
+    if not core:
+        t = (str(row.get("event_title") or "market"))[:56]
+        return f"[{bucket}] {t}"
+    return f"[{bucket}] {core}"
+
+
+def load_all_from_sqlite(db_path: Path) -> List[Dict[str, Any]]:
+    """All snapshot rows from a SQLite store (see ``clob_snapshot_store``), chronological by ``ts_utc``."""
+    from agents.application.clob_snapshot_store import load_rows_from_sqlite
+
+    return load_rows_from_sqlite(db_path, family_keys=None)
+
+
 def index_family_chains(
     idx: Dict[str, RecordedMarketInfo],
 ) -> Dict[str, List[str]]:
@@ -181,6 +232,57 @@ def index_family_chains(
 def snapshot_row_yes_ask_bid(row: Dict[str, Any]) -> Tuple[Optional[float], Optional[float]]:
     yb, ya = best_bid_ask(row.get("yes_book"))
     return yb, ya
+
+
+def window_outcome_book_extremes(
+    snapshots: List[Dict[str, Any]],
+) -> Dict[str, Optional[float]]:
+    """
+    Per market window: extremes of **best bid** (low) and **best ask** (high) for YES and NO books.
+
+    - ``yes_low`` / ``no_low``: minimum best bid seen across snapshots
+    - ``yes_high`` / ``no_high``: maximum best ask seen across snapshots
+
+    If a side has bids but no asks (or vice versa), the missing extreme is filled from the
+    available quotes so callers can still plot a range.
+    """
+    yes_bids: List[float] = []
+    yes_asks: List[float] = []
+    no_bids: List[float] = []
+    no_asks: List[float] = []
+    for row in snapshots:
+        yb, ya = best_bid_ask(row.get("yes_book"))
+        nb, na = best_bid_ask(row.get("no_book"))
+        if yb is not None:
+            yes_bids.append(yb)
+        if ya is not None:
+            yes_asks.append(ya)
+        if nb is not None:
+            no_bids.append(nb)
+        if na is not None:
+            no_asks.append(na)
+
+    def _low_high(bids: List[float], asks: List[float]) -> Tuple[Optional[float], Optional[float]]:
+        lo = min(bids) if bids else None
+        hi = max(asks) if asks else None
+        if lo is None and hi is None:
+            return None, None
+        if lo is None:
+            lo = hi
+        if hi is None:
+            hi = lo
+        if hi < lo:
+            lo, hi = hi, lo
+        return lo, hi
+
+    y_lo, y_hi = _low_high(yes_bids, yes_asks)
+    n_lo, n_hi = _low_high(no_bids, no_asks)
+    return {
+        "yes_low": y_lo,
+        "yes_high": y_hi,
+        "no_low": n_lo,
+        "no_high": n_hi,
+    }
 
 
 def merged_yes_ask_series_for_chain(
@@ -286,16 +388,35 @@ def backtest_family_chains(
     }
 
 
-def rows_for_condition(rows: List[Dict[str, Any]], condition_id: str) -> List[Dict[str, Any]]:
-    def key(r: Dict[str, Any]) -> str:
-        cid = (r.get("condition_id") or "").strip()
-        if cid:
-            return cid
-        yt = (r.get("yes_token_id") or "").strip()
-        nt = (r.get("no_token_id") or "").strip()
-        return f"{yt}:{nt}" if yt and nt else ""
+def condition_key_from_row(r: Dict[str, Any]) -> str:
+    """Stable id: ``condition_id`` or ``yes_token_id:no_token_id``."""
+    cid = (r.get("condition_id") or "").strip()
+    if cid:
+        return cid
+    yt = (r.get("yes_token_id") or "").strip()
+    nt = (r.get("no_token_id") or "").strip()
+    return f"{yt}:{nt}" if yt and nt else ""
 
-    sel = [r for r in rows if key(r) == condition_id]
+
+def group_rows_by_condition(rows: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Single-pass index: ``condition_id`` → chronologically sorted snapshot rows.
+
+    Use this instead of calling ``rows_for_condition`` in a loop over windows (avoids O(n×windows)).
+    """
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        cid = condition_key_from_row(r)
+        if not cid:
+            continue
+        groups.setdefault(cid, []).append(r)
+    for g in groups.values():
+        g.sort(key=lambda x: parse_ts_utc(str(x.get("ts_utc") or "")))
+    return groups
+
+
+def rows_for_condition(rows: List[Dict[str, Any]], condition_id: str) -> List[Dict[str, Any]]:
+    sel = [r for r in rows if condition_key_from_row(r) == condition_id]
     return sorted(sel, key=lambda x: parse_ts_utc(str(x.get("ts_utc") or "")))
 
 

@@ -85,13 +85,31 @@ def main() -> None:
         help="Also fetch midpoint for YES/NO tokens.",
     )
     p.add_argument("--once", action="store_true", help="Run one parallel sweep and exit.")
+    p.add_argument(
+        "--sqlite-db",
+        type=Path,
+        default=None,
+        help="Also append sweeps to this SQLite file (same as record_crypto_clob_snapshots.py).",
+    )
+    p.add_argument(
+        "--sqlite-all-markets",
+        action="store_true",
+        help="With --sqlite-db: insert every market into SQLite (default: only up/down slugs).",
+    )
     args = p.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     sweep_n = 0
+    sqlite_note = ""
+    if args.sqlite_db:
+        sqlite_note = (
+            f" sqlite={args.sqlite_db} (all markets)"
+            if args.sqlite_all_markets
+            else f" sqlite={args.sqlite_db} (up/down only)"
+        )
     print(
         f"Parallel recorder -> out={args.out_dir} interval={args.interval}s "
-        f"workers(15m/1h)={args.workers_15m}/{args.workers_1h}",
+        f"workers(15m/1h)={args.workers_15m}/{args.workers_1h}{sqlite_note}",
         flush=True,
     )
 
@@ -123,6 +141,8 @@ def main() -> None:
                 args.with_midpoint,
                 args.timeout,
                 max(1, args.workers_15m),
+                sqlite_db=args.sqlite_db,
+                sqlite_updown_only=not args.sqlite_all_markets,
             )
             return (ok, err, time.monotonic() - s0)
 
@@ -137,6 +157,8 @@ def main() -> None:
                 args.with_midpoint,
                 args.timeout,
                 max(1, args.workers_1h),
+                sqlite_db=args.sqlite_db,
+                sqlite_updown_only=not args.sqlite_all_markets,
             )
             return (ok, err, time.monotonic() - s0)
 

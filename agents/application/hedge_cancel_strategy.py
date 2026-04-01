@@ -1,8 +1,12 @@
 """
-Symmetric hedge-cancel: place limit buys on **both** YES and NO. Whichever leg completes
-buy **and** sell first: if the other leg’s buy had **no** fill, cancel that buy; if it already
-bought, keep working toward its sell. Then open a **second round only on the cancelled leg’s
-token** (YES round 2 or NO round 2) at ``*_buy_2`` / ``*_buy_2 + spread``.
+Symmetric hedge-cancel: place limit buys on **both** YES and NO. **As soon as either round-1
+buy fills**, the other leg’s working buy is **cancelled** if it has not filled yet (same snapshot:
+YES is evaluated before NO, so if both quotes would fill, YES fills and NO is cancelled).
+
+If the other leg **already** bought before this rule fires, both legs keep working their sells.
+
+After one leg completes its round-1 sell and the other never had inventory, open **round 2** on
+the same side that completed round 1 (``yes2`` / ``no2``) at ``*_buy_2`` / ``*_buy_2 + spread``.
 
 The **same** spread (margin in dollars) applies to **both** options in round 1 and round 2:
 ``sell = buy + spread`` for each leg.
@@ -100,6 +104,11 @@ def simulate_symmetric_hedge_cancel_segment(
                 bought_n1 = True
                 no_buy_qty += size
                 no_buy_notional += fill_p * size
+            # Cancel the other leg's open buy as soon as one side has filled (R1).
+            if bought_y1 and not bought_n1 and not no_buy_cancelled:
+                no_buy_cancelled = True
+            if bought_n1 and not bought_y1 and not yes_buy_cancelled:
+                yes_buy_cancelled = True
             if pos_y1 > 0 and not sold_y1 and yb is not None and yb >= yes_sell_1:
                 fill_qty = pos_y1
                 fill_p = yes_sell_1 if use_limit_fills else yb
@@ -119,10 +128,10 @@ def simulate_symmetric_hedge_cancel_segment(
 
             if sold_y1 and sold_n1:
                 phase = "done"
-            elif sold_y1 and not no_buy_cancelled and not bought_n1:
+            elif sold_y1 and not bought_n1:
                 no_buy_cancelled = True
                 phase = "yes2"
-            elif sold_n1 and not yes_buy_cancelled and not bought_y1:
+            elif sold_n1 and not bought_y1:
                 yes_buy_cancelled = True
                 phase = "no2"
 

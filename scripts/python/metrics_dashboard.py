@@ -73,9 +73,10 @@ STRATEGY_SHORT = {
 }
 STRATEGY_HELP = {
     "hedge_cancel": (
-        "Limit buys on **YES and NO**. Whichever leg completes **buy then sell** first: cancel the other leg’s "
-        "buy **only if it never filled**; if it already bought, keep its sell. Then round 2 only on the side "
-        "that had its buy cancelled. **Same spread** on both tokens: sell = buy + *m*¢. "
+        "Limit buys on **YES and NO**. **As soon as either buy fills**, cancel the other leg’s order if it has "
+        "not filled yet (YES is checked before NO on each snapshot). If both already hold, both work their sells. "
+        "After one leg completes its round-1 sell while the other never held inventory, round 2 on the completing side. "
+        "**Same spread** on both tokens: sell = buy + *m*¢. "
         "Optionally run **1–5 cycles** per market window: after an episode completes, restart on the remaining book. "
         "**Cycle step** (0–5¢): each later cycle adds this to the spread (higher priced-in edge per round-trip vs the prior cycle)."
     ),

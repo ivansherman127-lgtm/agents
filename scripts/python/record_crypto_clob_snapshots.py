@@ -24,6 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from agents.application.clob_snapshot_store import append_snapshots_batch  # noqa: E402
 from agents.application.polymarket_crypto_pages import (  # noqa: E402
     DEFAULT_UA,
     CryptoMarketTarget,
@@ -104,9 +105,12 @@ def run_sweep(
     with_midpoint: bool,
     timeout_s: float,
     workers: int,
+    sqlite_db: Optional[Path] = None,
+    sqlite_updown_only: bool = True,
 ) -> Tuple[int, int]:
     ok = 0
     err = 0
+    buffered: List[Dict[str, Any]] = []
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("a", encoding="utf-8") as f, ThreadPoolExecutor(
         max_workers=max(1, workers)
@@ -120,9 +124,15 @@ def run_sweep(
                 _, row = fut.result()
                 f.write(json.dumps(row, separators=(",", ":"), ensure_ascii=False) + "\n")
                 f.flush()
+                if sqlite_db is not None:
+                    buffered.append(row)
                 ok += 1
             except Exception:
                 err += 1
+    if sqlite_db is not None and buffered:
+        append_snapshots_batch(
+            sqlite_db.expanduser(), buffered, updown_only=sqlite_updown_only
+        )
     return ok, err
 
 
@@ -154,10 +164,27 @@ def main() -> None:
         action="store_true",
         help="Also fetch /midpoint for YES and NO (extra 2 HTTP calls per market)",
     )
+    p.add_argument(
+        "--sqlite-db",
+        type=Path,
+        default=None,
+        help="Also append each sweep to this SQLite file (indexed family_key; see migrate_clob_jsonl_to_sqlite.py)",
+    )
+    p.add_argument(
+        "--sqlite-all-markets",
+        action="store_true",
+        help="With --sqlite-db: insert every market into SQLite (default: only up/down slugs).",
+    )
     args = p.parse_args()
     page_keys = [x.strip() for x in args.pages.split(",") if x.strip()]
 
-    print(f"Recording to {args.out_dir} every {args.interval}s; pages={page_keys}", flush=True)
+    extra = f"; sqlite={args.sqlite_db}" if args.sqlite_db else ""
+    if args.sqlite_db:
+        extra += " (all markets)" if args.sqlite_all_markets else " (up/down only)"
+    print(
+        f"Recording to {args.out_dir} every {args.interval}s; pages={page_keys}{extra}",
+        flush=True,
+    )
     sweep_n = 0
     while True:
         sweep_n += 1
@@ -179,6 +206,8 @@ def main() -> None:
                 args.with_midpoint,
                 args.timeout,
                 args.workers,
+                sqlite_db=args.sqlite_db,
+                sqlite_updown_only=not args.sqlite_all_markets,
             )
             dt = time.monotonic() - t0
             print(
